@@ -55,10 +55,17 @@ jobs:
           # runtime links against glibc 2.28. NOTE: this build is not Y2038-safe.
           export CLR_DISABLE_64BIT_TIME_T=1
 
-          if grep -qi 'SubsetName Include="Host.Native"' eng/Subsets.props; then
-            SUBSET='clr+libs+host.native'
-          elif grep -qi 'SubsetName Include="Libs.Native"' eng/Subsets.props; then
-            SUBSET='clr+libs.native'
+          # Native-only: build just the native (.so) components, not the managed
+          # assemblies (CoreLib, crossgen2, ILCompiler, R2RDump, ...). The bare
+          # 'clr'/'libs' subsets pull in all of those managed tools, so prefer the
+          # '.native' subsets when they are available.
+          if grep -qi 'SubsetName Include="Clr.Native"' eng/Subsets.props \
+             && grep -qi 'SubsetName Include="Libs.Native"' eng/Subsets.props \
+             && grep -qi 'SubsetName Include="Host.Native"' eng/Subsets.props; then
+            SUBSET='clr.native+libs.native+host.native'
+          elif grep -qi 'SubsetName Include="Clr.Native"' eng/Subsets.props \
+             && grep -qi 'SubsetName Include="Libs.Native"' eng/Subsets.props; then
+            SUBSET='clr.native+libs.native'
           else
             SUBSET='clr+libs+host'
           fi
