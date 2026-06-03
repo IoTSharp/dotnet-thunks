@@ -233,7 +233,12 @@ void InitializeOpenSSLShim(void)
     }
 
 #if defined(TARGET_ARM) && defined(TARGET_LINUX)
-#if defined(_TIME_BITS) && (_TIME_BITS == 64)
+    // glibc only switches time_t to 64-bit (and defines __USE_TIME_BITS64) when
+    // _TIME_BITS=64 is actually honored, which requires glibc >= 2.34. On older
+    // glibc (e.g. Debian 10 buster / glibc 2.28) the macro is ignored and time_t
+    // stays 32-bit, so the assert is only meaningful when __USE_TIME_BITS64 is set.
+    // The runtime detection below (g_libSslUses32BitTime) keeps both cases correct.
+#if defined(__USE_TIME_BITS64)
     c_static_assert_msg(sizeof(time_t) == 8, "Build requires 64-bit time_t.");
 #endif
 
