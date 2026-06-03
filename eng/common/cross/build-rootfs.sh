@@ -326,6 +326,10 @@ while :; do
 
             if [[ -z "$__UbuntuRepo" ]]; then
                 __UbuntuRepo="http://archive.debian.org/debian/"
+                # archive.debian.org/debian only carries the base buster suite;
+                # buster-security lives under debian-security and 404s here,
+                # so don't request -updates/-security/-backports suites.
+                __UbuntuSuites=
             fi
             ;;
         bullseye) # Debian 11
