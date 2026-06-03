@@ -4,7 +4,46 @@
     <IoTSharpLowGlibcRuntimeRid Condition="'$(IoTSharpLowGlibcRuntimeRid)' == ''">linux-arm</IoTSharpLowGlibcRuntimeRid>
     <_IoTSharpLowGlibcRuntimePackageRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</_IoTSharpLowGlibcRuntimePackageRoot>
     <_IoTSharpLowGlibcRuntimePayloadDir>$([MSBuild]::NormalizeDirectory('$(_IoTSharpLowGlibcRuntimePackageRoot)', 'tools', 'lowglibc', 'linux-arm'))</_IoTSharpLowGlibcRuntimePayloadDir>
+    <_IoTSharpLowGlibcRuntimeAppHostPath>$([MSBuild]::NormalizePath('$(_IoTSharpLowGlibcRuntimePayloadDir)', 'apphost'))</_IoTSharpLowGlibcRuntimeAppHostPath>
+    <_IoTSharpLowGlibcRuntimeSingleFileHostPath>$([MSBuild]::NormalizePath('$(_IoTSharpLowGlibcRuntimePayloadDir)', 'singlefilehost'))</_IoTSharpLowGlibcRuntimeSingleFileHostPath>
   </PropertyGroup>
+
+  <Target Name="IoTSharpUseLowGlibcAppHost"
+          BeforeTargets="_GetAppHostPaths"
+          Condition="'$(IoTSharpLowGlibcRuntimeReplacementEnabled)' == 'true'
+                     and '$(RuntimeIdentifier)' == '$(IoTSharpLowGlibcRuntimeRid)'
+                     and ('$(SelfContained)' == 'true' or '$(PublishSelfContained)' == 'true')">
+    <Error Condition="'$(PublishSingleFile)' == 'true'"
+           Text="IoTSharp lowglibc runtime replacement does not support PublishSingleFile=true. Publish without single-file so runtime .so files can be replaced." />
+    <Error Condition="!Exists('$(_IoTSharpLowGlibcRuntimeAppHostPath)')"
+           Text="No IoTSharp lowglibc apphost was found at '$(_IoTSharpLowGlibcRuntimeAppHostPath)'." />
+    <Error Condition="!Exists('$(_IoTSharpLowGlibcRuntimeSingleFileHostPath)')"
+           Text="No IoTSharp lowglibc singlefilehost was found at '$(_IoTSharpLowGlibcRuntimeSingleFileHostPath)'." />
+
+    <PropertyGroup>
+      <UseAppHostFromAssetsFile>false</UseAppHostFromAssetsFile>
+      <AppHostSourcePath>$(_IoTSharpLowGlibcRuntimeAppHostPath)</AppHostSourcePath>
+      <SingleFileHostSourcePath>$(_IoTSharpLowGlibcRuntimeSingleFileHostPath)</SingleFileHostSourcePath>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ResolvedAppHostPack Remove="@(ResolvedAppHostPack)" />
+      <ResolvedSingleFileHostPack Remove="@(ResolvedSingleFileHostPack)" />
+      <ResolvedAppHostPack Include="$(_IoTSharpLowGlibcRuntimeAppHostPath)">
+        <Path>$(_IoTSharpLowGlibcRuntimeAppHostPath)</Path>
+        <PackageDirectory>$(_IoTSharpLowGlibcRuntimePayloadDir)</PackageDirectory>
+        <PathInPackage>apphost</PathInPackage>
+      </ResolvedAppHostPack>
+      <ResolvedSingleFileHostPack Include="$(_IoTSharpLowGlibcRuntimeSingleFileHostPath)">
+        <Path>$(_IoTSharpLowGlibcRuntimeSingleFileHostPath)</Path>
+        <PackageDirectory>$(_IoTSharpLowGlibcRuntimePayloadDir)</PackageDirectory>
+        <PathInPackage>singlefilehost</PathInPackage>
+      </ResolvedSingleFileHostPack>
+    </ItemGroup>
+
+    <Message Importance="high"
+             Text="Using IoTSharp lowglibc apphost templates from '$(_IoTSharpLowGlibcRuntimePayloadDir)'." />
+  </Target>
 
   <Target Name="IoTSharpReplaceLowGlibcRuntimeSos"
           AfterTargets="Publish"

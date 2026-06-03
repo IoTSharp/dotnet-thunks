@@ -80,12 +80,19 @@ jobs:
           echo "Using subset: $SUBSET"
           ./build.sh --arch arm --cross --configuration Release --subset "$SUBSET"
 
-      - name: Collect native .so artifacts
+      - name: Collect native artifacts
         run: |
           set -euo pipefail
           mkdir -p staging/linux-arm-lowglibc
           find artifacts/bin \( -type f -o -type l \) \( -name '*.so' -o -name '*.so.*' \) \
               -exec cp -av --parents {} staging/linux-arm-lowglibc/ \;
+
+          HOST_DIR="artifacts/bin/linux-arm.Release/corehost"
+          test -f "$HOST_DIR/apphost" \
+              || { echo "apphost missing from $HOST_DIR"; exit 1; }
+          test -f "$HOST_DIR/singlefilehost" \
+              || { echo "singlefilehost missing from $HOST_DIR"; exit 1; }
+          cp -av --parents "$HOST_DIR/apphost" "$HOST_DIR/singlefilehost" staging/linux-arm-lowglibc/
 
           test -n "$(find staging/linux-arm-lowglibc -name libcoreclr.so -print -quit)" \
               || { echo 'libcoreclr.so missing'; exit 1; }
@@ -94,13 +101,13 @@ jobs:
         run: |
           set -euo pipefail
           OBJDUMP=$(command -v arm-linux-gnueabihf-objdump || command -v llvm-objdump || command -v objdump)
-          MAX=$(find staging/linux-arm-lowglibc -type f \( -name '*.so' -o -name '*.so.*' \) \
+          MAX=$(find staging/linux-arm-lowglibc -type f \( -name '*.so' -o -name '*.so.*' -o -name apphost -o -name singlefilehost \) \
              -exec "$OBJDUMP" -T {} + 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n1 || true)
-          test -n "$MAX" || { echo "ERROR: no GLIBC symbol version found in .so files"; exit 1; }
+          test -n "$MAX" || { echo "ERROR: no GLIBC symbol version found in native artifacts"; exit 1; }
           echo "Highest required GLIBC = $MAX"
           LIMIT=GLIBC_2.28
           printf '%s\n%s\n' "$MAX" "$LIMIT" | sort -V | tail -n1 | grep -qx "$LIMIT" \
-              || { echo "ERROR: 某些 .so 需要高于 $LIMIT 的 glibc"; exit 1; }
+              || { echo "ERROR: 某些 native artifacts 需要高于 $LIMIT 的 glibc"; exit 1; }
 
       - name: Prepare NuGet payload
         run: |
@@ -121,10 +128,16 @@ jobs:
             esac
           done < <(find artifacts/bin \( -type f -o -type l \) -name '*.so' -print0)
 
+          HOST_DIR="artifacts/bin/linux-arm.Release/corehost"
+          cp -Lv "$HOST_DIR/apphost" "$PAYLOAD/apphost"
+          cp -Lv "$HOST_DIR/singlefilehost" "$PAYLOAD/singlefilehost"
+
           ls -la "$PAYLOAD"
           test -f "$PAYLOAD/libcoreclr.so" || { echo 'libcoreclr.so missing from NuGet payload'; exit 1; }
           test -f "$PAYLOAD/libhostpolicy.so" || { echo 'libhostpolicy.so missing from NuGet payload'; exit 1; }
           test -f "$PAYLOAD/libhostfxr.so" || { echo 'libhostfxr.so missing from NuGet payload'; exit 1; }
+          test -f "$PAYLOAD/apphost" || { echo 'apphost missing from NuGet payload'; exit 1; }
+          test -f "$PAYLOAD/singlefilehost" || { echo 'singlefilehost missing from NuGet payload'; exit 1; }
 
       - name: Compute NuGet package version
         id: package_version

@@ -1,6 +1,6 @@
 # IoTSharp .NET Runtime Low Glibc Arm32
 
-This package replaces the native `.so` files in `linux-arm` self-contained publish output with IoTSharp-built .NET runtime native libraries targeting glibc 2.28.
+This package makes `linux-arm` self-contained publish output use IoTSharp-built .NET native artifacts targeting glibc 2.28. It replaces the runtime `.so` files and supplies low-glibc `apphost` templates, so the generated application executable is compatible too.
 
 Add the package to an application project:
 
@@ -16,4 +16,4 @@ Publish with:
 dotnet publish -c Release -r linux-arm --self-contained true /p:PublishSingleFile=false
 ```
 
-The package is active only for `RuntimeIdentifier=linux-arm` and self-contained publish. Single-file publish is rejected because the runtime files must be copied as separate files.
+The package is active only for `RuntimeIdentifier=linux-arm` and self-contained publish. Single-file publish is rejected because the runtime `.so` files must be copied as separate files before the app runs.

@@ -22,6 +22,8 @@
     <None Include="README.md" Pack="true" PackagePath="" />
     <None Include="buildTransitive/$(PackageId).targets" Pack="true" PackagePath="buildTransitive/" />
     <None Include="$(LowGlibcPayloadDir)/*.so" Pack="true" PackagePath="tools/lowglibc/linux-arm/" />
+    <None Include="$(LowGlibcPayloadDir)/apphost" Pack="true" PackagePath="tools/lowglibc/linux-arm/" />
+    <None Include="$(LowGlibcPayloadDir)/singlefilehost" Pack="true" PackagePath="tools/lowglibc/linux-arm/" />
   </ItemGroup>
 
   <Target Name="ValidateLowGlibcPayload" BeforeTargets="Pack">
@@ -37,5 +39,9 @@
            Text="LowGlibcPayloadDir must contain libhostpolicy.so." />
     <Error Condition="!Exists('$(LowGlibcPayloadDir)/libhostfxr.so')"
            Text="LowGlibcPayloadDir must contain libhostfxr.so." />
+    <Error Condition="!Exists('$(LowGlibcPayloadDir)/apphost')"
+           Text="LowGlibcPayloadDir must contain apphost." />
+    <Error Condition="!Exists('$(LowGlibcPayloadDir)/singlefilehost')"
+           Text="LowGlibcPayloadDir must contain singlefilehost." />
   </Target>
 </Project>
