@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>IoTSharp.DotNetRuntime.LowGlibc.Arm32</PackageId>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">10.0.0-glibc228.local</PackageVersion>
+    <Authors>IoTSharp</Authors>
+    <Company>IoTSharp</Company>
+    <Description>Replaces linux-arm self-contained publish output with IoTSharp .NET runtime native libraries built for glibc 2.28.</Description>
+    <PackageTags>dotnet;runtime;linux-arm;arm32;glibc;lowglibc;iotsharp</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/IoTSharp/dotnet_arm32</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/IoTSharp/dotnet_arm32</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <LowGlibcPayloadDir Condition="'$(LowGlibcPayloadDir)' == ''">$(MSBuildProjectDirectory)/payload/linux-arm</LowGlibcPayloadDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="buildTransitive/$(PackageId).targets" Pack="true" PackagePath="buildTransitive/" />
+    <None Include="$(LowGlibcPayloadDir)/*.so" Pack="true" PackagePath="tools/lowglibc/linux-arm/" />
+  </ItemGroup>
+
+  <Target Name="ValidateLowGlibcPayload" BeforeTargets="Pack">
+    <ItemGroup>
+      <_LowGlibcPayloadSo Include="$(LowGlibcPayloadDir)/*.so" />
+    </ItemGroup>
+
+    <Error Condition="'@(_LowGlibcPayloadSo)' == ''"
+           Text="No .so files were found in LowGlibcPayloadDir='$(LowGlibcPayloadDir)'." />
+    <Error Condition="!Exists('$(LowGlibcPayloadDir)/libcoreclr.so')"
+           Text="LowGlibcPayloadDir must contain libcoreclr.so." />
+    <Error Condition="!Exists('$(LowGlibcPayloadDir)/libhostpolicy.so')"
+           Text="LowGlibcPayloadDir must contain libhostpolicy.so." />
+    <Error Condition="!Exists('$(LowGlibcPayloadDir)/libhostfxr.so')"
+           Text="LowGlibcPayloadDir must contain libhostfxr.so." />
+  </Target>
+</Project>

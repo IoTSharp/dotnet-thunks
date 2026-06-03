@@ -4,13 +4,21 @@ on:
   push:
     branches:
       - release/10.0
+    tags:
+      - v*
   pull_request:
     branches:
       - release/10.0
   workflow_dispatch:
+    inputs:
+      packageVersion:
+        description: Optional NuGet package version override
+        required: false
+        type: string
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
 
 concurrency:
   group: build-arm-${{ github.ref }}
@@ -19,6 +27,9 @@ concurrency:
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   DOTNET_NOLOGO: 1
+  LOWGLIBC_NUGET_PACKAGE_ID: IoTSharp.DotNetRuntime.LowGlibc.Arm32
+  NUGET_SOURCE: https://api.nuget.org/v3/index.json
+  GITHUB_NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
 
 jobs:
   build-arm:
@@ -91,6 +102,58 @@ jobs:
           printf '%s\n%s\n' "$MAX" "$LIMIT" | sort -V | tail -n1 | grep -qx "$LIMIT" \
               || { echo "ERROR: 某些 .so 需要高于 $LIMIT 的 glibc"; exit 1; }
 
+      - name: Prepare NuGet payload
+        run: |
+          set -euo pipefail
+          PAYLOAD="$PWD/artifacts/lowglibc-nuget-payload/linux-arm"
+          rm -rf "$PAYLOAD"
+          mkdir -p "$PAYLOAD"
+
+          while IFS= read -r -d '' file; do
+            base=$(basename "$file")
+            case "$base" in
+              libcoreclr.so|libclrjit.so|libclrgc.so|libclrgcexp.so|libcoreclrtraceptprovider.so|libmscordaccore.so|libmscordbi.so|libhostpolicy.so|libhostfxr.so|libSystem.*.so)
+                if [ -e "$PAYLOAD/$base" ] && ! cmp -s "$file" "$PAYLOAD/$base"; then
+                  echo "Replacing duplicate payload file $base with $file"
+                fi
+                cp -Lv "$file" "$PAYLOAD/$base"
+                ;;
+            esac
+          done < <(find artifacts/bin \( -type f -o -type l \) -name '*.so' -print0)
+
+          ls -la "$PAYLOAD"
+          test -f "$PAYLOAD/libcoreclr.so" || { echo 'libcoreclr.so missing from NuGet payload'; exit 1; }
+          test -f "$PAYLOAD/libhostpolicy.so" || { echo 'libhostpolicy.so missing from NuGet payload'; exit 1; }
+          test -f "$PAYLOAD/libhostfxr.so" || { echo 'libhostfxr.so missing from NuGet payload'; exit 1; }
+
+      - name: Compute NuGet package version
+        id: package_version
+        env:
+          PACKAGE_VERSION_OVERRIDE: ${{ github.event.inputs.packageVersion }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [[ "${GITHUB_REF_NAME:-}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [ -n "${PACKAGE_VERSION_OVERRIDE:-}" ]; then
+            VERSION="$PACKAGE_VERSION_OVERRIDE"
+          else
+            MAJOR=$(sed -n 's/.*<MajorVersion>\([^<]*\)<\/MajorVersion>.*/\1/p' eng/Versions.props | head -n1)
+            MINOR=$(sed -n 's/.*<MinorVersion>\([^<]*\)<\/MinorVersion>.*/\1/p' eng/Versions.props | head -n1)
+            PATCH=$(sed -n 's/.*<PatchVersion>\([^<]*\)<\/PatchVersion>.*/\1/p' eng/Versions.props | head -n1)
+            VERSION="${MAJOR}.${MINOR}.${PATCH}-glibc228.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "NuGet package version: $VERSION"
+
+      - name: Pack NuGet package
+        run: |
+          set -euo pipefail
+          ./dotnet.sh pack eng/lowglibc-nuget/${LOWGLIBC_NUGET_PACKAGE_ID}.csproj \
+            --configuration Release \
+            --output "$PWD/artifacts/packages/lowglibc" \
+            /p:PackageVersion="${{ steps.package_version.outputs.version }}" \
+            /p:LowGlibcPayloadDir="$PWD/artifacts/lowglibc-nuget-payload/linux-arm"
+
       - name: Pack artifact
         run: |
           set -euo pipefail
@@ -103,3 +166,55 @@ jobs:
           name: dotnet-runtime-linux-arm-glibc228
           path: dotnet-runtime-linux-arm-glibc228-*.tar.gz
           retention-days: 30
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-runtime-linux-arm-glibc228-nuget
+          path: artifacts/packages/lowglibc/*.nupkg
+          retention-days: 30
+
+      - name: Publish NuGet package
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "::error::Missing NuGet API key. Add an organization or repository secret named NUGET_API_KEY."
+            exit 1
+          fi
+
+          for package in artifacts/packages/lowglibc/*.nupkg; do
+            ./dotnet.sh nuget push "$package" \
+              --api-key "$NUGET_API_KEY" \
+              --source "$NUGET_SOURCE" \
+              --skip-duplicate
+
+            ./dotnet.sh nuget push "$package" \
+              --api-key "$GITHUB_TOKEN" \
+              --source "$GITHUB_NUGET_SOURCE" \
+              --skip-duplicate
+          done
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dotnet-runtime-linux-arm-glibc228-*.tar.gz \
+              artifacts/packages/lowglibc/*.nupkg \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dotnet-runtime-linux-arm-glibc228-*.tar.gz \
+              artifacts/packages/lowglibc/*.nupkg \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "IoTSharp linux-arm lowglibc runtime build for $GITHUB_REF_NAME."
+          fi

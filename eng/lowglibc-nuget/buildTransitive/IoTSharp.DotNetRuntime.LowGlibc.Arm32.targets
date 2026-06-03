@@ -1,0 +1,44 @@
+<Project>
+  <PropertyGroup>
+    <IoTSharpLowGlibcRuntimeReplacementEnabled Condition="'$(IoTSharpLowGlibcRuntimeReplacementEnabled)' == ''">true</IoTSharpLowGlibcRuntimeReplacementEnabled>
+    <IoTSharpLowGlibcRuntimeRid Condition="'$(IoTSharpLowGlibcRuntimeRid)' == ''">linux-arm</IoTSharpLowGlibcRuntimeRid>
+    <_IoTSharpLowGlibcRuntimePackageRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</_IoTSharpLowGlibcRuntimePackageRoot>
+    <_IoTSharpLowGlibcRuntimePayloadDir>$([MSBuild]::NormalizeDirectory('$(_IoTSharpLowGlibcRuntimePackageRoot)', 'tools', 'lowglibc', 'linux-arm'))</_IoTSharpLowGlibcRuntimePayloadDir>
+  </PropertyGroup>
+
+  <Target Name="IoTSharpReplaceLowGlibcRuntimeSos"
+          AfterTargets="Publish"
+          Condition="'$(IoTSharpLowGlibcRuntimeReplacementEnabled)' == 'true'
+                     and '$(RuntimeIdentifier)' == '$(IoTSharpLowGlibcRuntimeRid)'
+                     and ('$(SelfContained)' == 'true' or '$(PublishSelfContained)' == 'true')">
+    <Error Condition="'$(PublishSingleFile)' == 'true'"
+           Text="IoTSharp lowglibc runtime replacement does not support PublishSingleFile=true. Publish without single-file so runtime .so files can be replaced." />
+
+    <PropertyGroup>
+      <_IoTSharpLowGlibcPublishDir>$([MSBuild]::NormalizeDirectory('$(PublishDir)'))</_IoTSharpLowGlibcPublishDir>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_IoTSharpLowGlibcRuntimeSo Include="$(_IoTSharpLowGlibcRuntimePayloadDir)*.so" />
+    </ItemGroup>
+
+    <Error Condition="'@(_IoTSharpLowGlibcRuntimeSo)' == ''"
+           Text="No IoTSharp lowglibc runtime .so files were found in '$(_IoTSharpLowGlibcRuntimePayloadDir)'." />
+    <Error Condition="'$(_IoTSharpLowGlibcPublishDir)' == ''"
+           Text="PublishDir is empty, so IoTSharp lowglibc runtime .so files cannot be copied." />
+    <Error Condition="!Exists('$(_IoTSharpLowGlibcPublishDir)libcoreclr.so')"
+           Text="The publish output does not contain libcoreclr.so. Use a linux-arm self-contained publish output before applying IoTSharp lowglibc runtime replacement." />
+
+    <Message Importance="high"
+             Text="Replacing linux-arm runtime .so files with IoTSharp lowglibc build from '$(_IoTSharpLowGlibcRuntimePayloadDir)'." />
+
+    <Copy SourceFiles="@(_IoTSharpLowGlibcRuntimeSo)"
+          DestinationFiles="@(_IoTSharpLowGlibcRuntimeSo->'$(_IoTSharpLowGlibcPublishDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="false"
+          OverwriteReadOnlyFiles="true" />
+
+    <ItemGroup>
+      <FileWrites Include="@(_IoTSharpLowGlibcRuntimeSo->'$(_IoTSharpLowGlibcPublishDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+</Project>
