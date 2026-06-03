@@ -1,0 +1,98 @@
+name: build-linux-arm-lowglibc
+
+on:
+  push:
+    branches:
+      - release/10.0
+  pull_request:
+    branches:
+      - release/10.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-arm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  build-arm:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake clang lld llvm build-essential python3 debootstrap qemu-user-static binfmt-support \
+            libicu-dev libssl-dev libkrb5-dev zlib1g-dev libcurl4-openssl-dev libunwind-dev libnuma-dev \
+            liblttng-ust-dev tar gzip xz-utils unzip symlinks gnupg2 debian-archive-keyring file \
+            binutils-arm-linux-gnueabihf
+
+      - name: Build arm buster rootfs
+        run: |
+          sudo ROOTFS_DIR="$PWD/.tools/rootfs/arm" \
+              ./eng/common/cross/build-rootfs.sh arm buster --skipsigcheck
+          sudo chown -R "$USER":"$USER" .tools
+
+      - name: Build native runtime (cross arm)
+        run: |
+          set -euo pipefail
+          export ROOTFS_DIR="$PWD/.tools/rootfs/arm"
+
+          if grep -qi 'SubsetName Include="Host.Native"' eng/Subsets.props; then
+            SUBSET='clr+libs+host.native'
+          elif grep -qi 'SubsetName Include="Libs.Native"' eng/Subsets.props; then
+            SUBSET='clr+libs.native'
+          else
+            SUBSET='clr+libs+host'
+          fi
+
+          echo "Using subset: $SUBSET"
+          ./build.sh --arch arm --cross --configuration Release --subset "$SUBSET"
+
+      - name: Collect native .so artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p staging/linux-arm-lowglibc
+          find artifacts/bin \( -type f -o -type l \) \( -name '*.so' -o -name '*.so.*' \) \
+              -exec cp -av --parents {} staging/linux-arm-lowglibc/ \;
+
+          test -n "$(find staging/linux-arm-lowglibc -name libcoreclr.so -print -quit)" \
+              || { echo 'libcoreclr.so missing'; exit 1; }
+
+      - name: Verify glibc compatibility (<= 2.28)
+        run: |
+          set -euo pipefail
+          OBJDUMP=$(command -v arm-linux-gnueabihf-objdump || command -v llvm-objdump || command -v objdump)
+          MAX=$(find staging/linux-arm-lowglibc -type f \( -name '*.so' -o -name '*.so.*' \) \
+             -exec "$OBJDUMP" -T {} + 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n1 || true)
+          test -n "$MAX" || { echo "ERROR: no GLIBC symbol version found in .so files"; exit 1; }
+          echo "Highest required GLIBC = $MAX"
+          LIMIT=GLIBC_2.28
+          printf '%s\n%s\n' "$MAX" "$LIMIT" | sort -V | tail -n1 | grep -qx "$LIMIT" \
+              || { echo "ERROR: 某些 .so 需要高于 $LIMIT 的 glibc"; exit 1; }
+
+      - name: Pack artifact
+        run: |
+          set -euo pipefail
+          VER=$(date -u +%Y%m%d-%H%M%S)
+          tar -C staging -czf dotnet-runtime-linux-arm-glibc228-${VER}.tar.gz linux-arm-lowglibc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-runtime-linux-arm-glibc228
+          path: dotnet-runtime-linux-arm-glibc228-*.tar.gz
+          retention-days: 30
