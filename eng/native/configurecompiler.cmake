@@ -530,13 +530,8 @@ endif(CLR_CMAKE_HOST_WIN32)
 
 # Unconditionally define _FILE_OFFSET_BITS as 64 on all platforms.
 add_definitions(-D_FILE_OFFSET_BITS=64)
-# Define _TIME_BITS as 64 on all platforms for Y2038 safety. On 32-bit Linux this
-# requires glibc >= 2.34. To build against an older glibc (e.g. Debian 10 buster /
-# glibc 2.28), set the CLR_DISABLE_64BIT_TIME_T=1 environment variable before
-# configuring; the resulting 32-bit time_t build is NOT Y2038-safe.
-if (NOT "$ENV{CLR_DISABLE_64BIT_TIME_T}" STREQUAL "1")
-    add_definitions(-D_TIME_BITS=64)
-endif()
+# Unconditionally define _TIME_BITS as 64 on all platforms.
+add_definitions(-D_TIME_BITS=64)
 
 # Architecture specific files folder name
 if (CLR_CMAKE_TARGET_ARCH_AMD64)

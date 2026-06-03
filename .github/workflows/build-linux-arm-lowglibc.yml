@@ -50,10 +50,6 @@ jobs:
         run: |
           set -euo pipefail
           export ROOTFS_DIR="$PWD/.tools/rootfs/arm"
-          # Debian 10 buster ships glibc 2.28, which predates 64-bit time_t
-          # (_TIME_BITS=64 needs glibc >= 2.34). Build with 32-bit time_t so the
-          # runtime links against glibc 2.28. NOTE: this build is not Y2038-safe.
-          export CLR_DISABLE_64BIT_TIME_T=1
 
           # Native-only: build just the native (.so) components, not the managed
           # assemblies (CoreLib, crossgen2, ILCompiler, R2RDump, ...). The bare
