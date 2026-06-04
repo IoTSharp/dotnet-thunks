@@ -507,11 +507,19 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE 'artifacts\bin\native\net10.0-windows-Release-x86'),
             (Join-Path $env:GITHUB_WORKSPACE 'artifacts\bin\win-x86.Release\corehost')
           )
+          $nonShippingPayloadDirectories = @(
+            'cdac-build-tool'
+          )
 
           foreach ($root in $candidateRoots) {
             if (Test-Path $root) {
               Get-ChildItem -Path $root -Recurse -File |
                 Where-Object { $_.Extension -in '.dll', '.exe' } |
+                Where-Object {
+                  $relativePath = [System.IO.Path]::GetRelativePath($root, $_.FullName)
+                  $topLevelDirectory = ($relativePath -split '[\\/]')[0]
+                  $topLevelDirectory -notin $nonShippingPayloadDirectories
+                } |
                 ForEach-Object {
                 Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload $_.Name) -Force
               }
