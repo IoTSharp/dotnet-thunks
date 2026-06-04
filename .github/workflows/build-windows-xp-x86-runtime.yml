@@ -270,7 +270,9 @@ jobs:
           "@
           Set-Content -LiteralPath $cmakeInit -Value $cmakeInitContent -NoNewline
 
-          $cmakeArgs = "-C $cmakeInitForward -DCMAKE_SYSTEM_VERSION=$env:XP_TARGET_PLATFORM_MIN_VERSION"
+          # build-runtime.cmd forwards each -cmakeargs value as one quoted CMake argument.
+          # Keep -C by itself; CMAKE_SYSTEM_VERSION is set inside the init cache file.
+          $cmakeArgs = "-C $cmakeInitForward"
 
           "XP_CMAKE_ARGS=$cmakeArgs" >> $env:GITHUB_ENV
           Write-Host "XP CMake init: $cmakeInit"
