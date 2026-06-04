@@ -147,6 +147,22 @@ jobs:
             -Old 'set (WINDOWS_SUBSYSTEM_VERSION 6.01)' `
             -New 'set (WINDOWS_SUBSYSTEM_VERSION 5.01)'
 
+          $nativeCompilerOld = @'
+            set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /SUBSYSTEM:WINDOWS,${WINDOWS_SUBSYSTEM_VERSION}")
+          '@
+          $nativeCompilerNew = @'
+            set(CMAKE_C_CREATE_CONSOLE_EXE "/subsystem:console,${WINDOWS_SUBSYSTEM_VERSION}")
+            set(CMAKE_CXX_CREATE_CONSOLE_EXE "/subsystem:console,${WINDOWS_SUBSYSTEM_VERSION}")
+            set(CMAKE_C_CREATE_WIN32_EXE "/subsystem:windows,${WINDOWS_SUBSYSTEM_VERSION}")
+            set(CMAKE_CXX_CREATE_WIN32_EXE "/subsystem:windows,${WINDOWS_SUBSYSTEM_VERSION}")
+            set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /SUBSYSTEM:WINDOWS,${WINDOWS_SUBSYSTEM_VERSION}")
+          '@
+
+          Replace-InFile `
+            -Path 'eng\native\configurecompiler.cmake' `
+            -Old $nativeCompilerOld `
+            -New $nativeCompilerNew
+
           $corehostBuildOld = 'if /i [%1] == [-fsanitize] ( set __ExtraCmakeParams=%__ExtraCmakeParams% "-DCLR_CMAKE_ENABLE_SANITIZERS=%2"&&shift&&shift&goto Arg_Loop)'
           $corehostBuildNew = @'
           if /i [%1] == [-cmakeargs] ( set __ExtraCmakeParams=%__ExtraCmakeParams% %2&&shift&&shift&goto Arg_Loop)
@@ -203,9 +219,6 @@ jobs:
               add_executable(${ARGV})
             endif(NOT WIN32)
             add_sanitizer_runtime_support(${targetName})
-            if(DEFINED CLR_CMAKE_YY_THUNKS_OBJ AND NOT "${CLR_CMAKE_YY_THUNKS_OBJ}" STREQUAL "")
-              target_link_options(${targetName} PRIVATE "/SUBSYSTEM:WINDOWS,5.01")
-            endif()
             if(NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
               strip_symbols(${ARGV0} symbolFile)
             endif()
@@ -246,7 +259,7 @@ jobs:
 
           $cFlags = "/I$vcLtlInclude /I$vcLtlPlatformInclude"
           $cxxFlags = $cFlags
-          $commonLinkerFlags = "/LIBPATH:$vcLtlLib $yyThunksObj /SUBSYSTEM:WINDOWS,5.01"
+          $commonLinkerFlags = "/LIBPATH:$vcLtlLib $yyThunksObj"
 
           $cmakeOverlayDir = Join-Path $env:GITHUB_WORKSPACE '.tools\xp-cmake'
           New-Item -ItemType Directory -Force -Path $cmakeOverlayDir | Out-Null
