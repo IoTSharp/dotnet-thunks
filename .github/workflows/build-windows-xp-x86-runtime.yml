@@ -475,6 +475,21 @@ jobs:
           /p:RunAnalyzers=false
           /p:WindowsTargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
           /p:TargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
+          /p:BuildArchitecture=%XP_TARGET_ARCH%
+
+      - name: Dump native configure logs
+        if: failure()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          Get-ChildItem -Path "$env:GITHUB_WORKSPACE\artifacts\obj" -Recurse -File -Include CMakeError.log,CMakeOutput.log,CMakeConfigureLog.yaml,CMakeCache.txt |
+            Sort-Object FullName |
+            ForEach-Object {
+              Write-Host ""
+              Write-Host "===== $($_.FullName) ====="
+              Get-Content -LiteralPath $_.FullName -Tail 300
+            }
 
       - name: Collect runtime payload
         shell: pwsh
