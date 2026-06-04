@@ -1,0 +1,409 @@
+name: build-windows-xp-x86-runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      vcltlVersion:
+        description: VC-LTL NuGet package version
+        required: false
+        type: string
+        default: 5.3.1
+      yyThunksVersion:
+        description: YY-Thunks NuGet package version
+        required: false
+        type: string
+        default: 1.2.1
+  pull_request:
+    branches:
+      - release/10.0
+    paths:
+      - .github/workflows/build-windows-xp-x86-runtime.yml
+      - eng/**
+      - src/coreclr/**
+      - src/native/**
+  push:
+    branches:
+      - release/10.0
+    paths:
+      - .github/workflows/build-windows-xp-x86-runtime.yml
+      - eng/**
+      - src/coreclr/**
+      - src/native/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-xp-x86-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  XP_TARGET_ARCH: x86
+  XP_TARGET_RID: win-x86
+  XP_TARGET_CONFIGURATION: Release
+  XP_TARGET_PLATFORM_MIN_VERSION: 5.1.2600
+  XP_TARGET_PLATFORM_MIN_VERSION_FULL: 5.1.2600.0
+  VC_LTL_VERSION: ${{ github.event.inputs.vcltlVersion || '5.3.1' }}
+  YY_THUNKS_VERSION: ${{ github.event.inputs.yyThunksVersion || '1.2.1' }}
+
+jobs:
+  build-xp-x86-runtime:
+    name: Windows XP x86 .NET 10 runtime
+    runs-on: windows-2022
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Prepare VC-LTL5 and YY-Thunks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $packagesRoot = Join-Path $env:GITHUB_WORKSPACE '.tools\xp-native-packages'
+          New-Item -ItemType Directory -Force -Path $packagesRoot | Out-Null
+
+          function Expand-NuGetPackage {
+            param(
+              [Parameter(Mandatory = $true)][string]$Id,
+              [Parameter(Mandatory = $true)][string]$Version,
+              [Parameter(Mandatory = $true)][string]$Destination
+            )
+
+            $lowerId = $Id.ToLowerInvariant()
+            $lowerVersion = $Version.ToLowerInvariant()
+            $nupkg = Join-Path $packagesRoot "$lowerId.$Version.nupkg"
+            $url = "https://api.nuget.org/v3-flatcontainer/$lowerId/$lowerVersion/$lowerId.$lowerVersion.nupkg"
+
+            Invoke-WebRequest -Uri $url -OutFile $nupkg
+            if (Test-Path $Destination) {
+              Remove-Item -LiteralPath $Destination -Recurse -Force
+            }
+            New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+            Expand-Archive -LiteralPath $nupkg -DestinationPath $Destination -Force
+          }
+
+          $vcLtlRoot = Join-Path $packagesRoot "vc-ltl\$env:VC_LTL_VERSION"
+          $yyThunksRoot = Join-Path $packagesRoot "yy-thunks\$env:YY_THUNKS_VERSION"
+
+          Expand-NuGetPackage -Id 'VC-LTL' -Version $env:VC_LTL_VERSION -Destination $vcLtlRoot
+          Expand-NuGetPackage -Id 'YY-Thunks' -Version $env:YY_THUNKS_VERSION -Destination $yyThunksRoot
+
+          $vcLtlInclude = Join-Path $vcLtlRoot 'build\native\TargetPlatform\header'
+          $vcLtlPlatformInclude = Join-Path $vcLtlRoot "build\native\TargetPlatform\$env:XP_TARGET_PLATFORM_MIN_VERSION_FULL\header"
+          $vcLtlLib = Join-Path $vcLtlRoot "build\native\TargetPlatform\$env:XP_TARGET_PLATFORM_MIN_VERSION_FULL\lib\Win32"
+          $yyThunksObj = Join-Path $yyThunksRoot 'build\native\objs\x86\YY_Thunks_for_WinXP.obj'
+
+          @($vcLtlInclude, $vcLtlPlatformInclude, $vcLtlLib, $yyThunksObj) | ForEach-Object {
+            if (-not (Test-Path $_)) {
+              throw "Required VC-LTL5/YY-Thunks path was not found: $_"
+            }
+          }
+
+          "VC_LTL_ROOT=$vcLtlRoot" >> $env:GITHUB_ENV
+          "VC_LTL_INCLUDE=$vcLtlInclude" >> $env:GITHUB_ENV
+          "VC_LTL_PLATFORM_INCLUDE=$vcLtlPlatformInclude" >> $env:GITHUB_ENV
+          "VC_LTL_LIB=$vcLtlLib" >> $env:GITHUB_ENV
+          "YY_THUNKS_OBJ=$yyThunksObj" >> $env:GITHUB_ENV
+
+          Write-Host "VC-LTL root: $vcLtlRoot"
+          Write-Host "YY-Thunks object: $yyThunksObj"
+
+      - name: Apply XP native build overlay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Replace-InFile {
+            param(
+              [Parameter(Mandatory = $true)][string]$Path,
+              [Parameter(Mandatory = $true)][string]$Old,
+              [Parameter(Mandatory = $true)][string]$New
+            )
+
+            $fullPath = Join-Path $env:GITHUB_WORKSPACE $Path
+            $content = Get-Content -LiteralPath $fullPath -Raw
+            $normalizedContent = $content -replace "`r`n", "`n"
+            $normalizedOld = $Old -replace "`r`n", "`n"
+            $normalizedNew = $New -replace "`r`n", "`n"
+            if (-not $normalizedContent.Contains($normalizedOld)) {
+              throw "Could not find expected text in $Path"
+            }
+            Set-Content -LiteralPath $fullPath -Value $normalizedContent.Replace($normalizedOld, $normalizedNew) -NoNewline
+          }
+
+          Replace-InFile `
+            -Path 'eng\native\configurecompiler.cmake' `
+            -Old 'set (WINDOWS_SUBSYSTEM_VERSION 6.01)' `
+            -New 'set (WINDOWS_SUBSYSTEM_VERSION 5.01)'
+
+          $corehostBuildOld = 'if /i [%1] == [-fsanitize] ( set __ExtraCmakeParams=%__ExtraCmakeParams% "-DCLR_CMAKE_ENABLE_SANITIZERS=%2"&&shift&&shift&goto Arg_Loop)'
+          $corehostBuildNew = @'
+          if /i [%1] == [-cmakeargs] ( set __ExtraCmakeParams=%__ExtraCmakeParams% %2&&shift&&shift&goto Arg_Loop)
+          if /i [%1] == [-fsanitize] ( set __ExtraCmakeParams=%__ExtraCmakeParams% "-DCLR_CMAKE_ENABLE_SANITIZERS=%2"&&shift&&shift&goto Arg_Loop)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\build.cmd' `
+            -Old $corehostBuildOld `
+            -New $corehostBuildNew
+
+          $corehostProjOld = '      <BuildArgs Condition="''$(Ninja)'' == ''false''">$(BuildArgs) msbuild</BuildArgs>'
+          $corehostProjNew = @'
+                <BuildArgs Condition="'$(Ninja)' == 'false'">$(BuildArgs) msbuild</BuildArgs>
+                <BuildArgs Condition="'$(CMakeArgs)' != ''">$(BuildArgs) -cmakeargs "$(CMakeArgs)"</BuildArgs>
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\corehost.proj' `
+            -Old $corehostProjOld `
+            -New $corehostProjNew
+
+          $nativeFunctionsOld = @'
+          function(add_executable_clr targetName)
+            if(NOT WIN32)
+              add_executable(${ARGV} ${VERSION_FILE_PATH})
+              disable_pax_mprotect(${ARGV})
+            else()
+              add_executable(${ARGV})
+            endif(NOT WIN32)
+            add_sanitizer_runtime_support(${targetName})
+            if(NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
+              strip_symbols(${ARGV0} symbolFile)
+            endif()
+          endfunction()
+          
+          function(add_library_clr targetName kind)
+            if(NOT WIN32 AND "${kind}" STREQUAL "SHARED")
+              add_library(${ARGV} ${VERSION_FILE_PATH})
+            else()
+              add_library(${ARGV})
+            endif()
+            if("${kind}" STREQUAL "SHARED" AND NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
+              strip_symbols(${ARGV0} symbolFile)
+            endif()
+          endfunction()
+          '@
+          $nativeFunctionsNew = @'
+          function(add_executable_clr targetName)
+            if(NOT WIN32)
+              add_executable(${ARGV} ${VERSION_FILE_PATH})
+              disable_pax_mprotect(${ARGV})
+            else()
+              add_executable(${ARGV})
+            endif(NOT WIN32)
+            add_sanitizer_runtime_support(${targetName})
+            if(DEFINED CLR_CMAKE_YY_THUNKS_OBJ AND NOT "${CLR_CMAKE_YY_THUNKS_OBJ}" STREQUAL "")
+              target_link_options(${targetName} PRIVATE "/SUBSYSTEM:WINDOWS,5.01")
+            endif()
+            if(NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
+              strip_symbols(${ARGV0} symbolFile)
+            endif()
+          endfunction()
+          
+          function(add_library_clr targetName kind)
+            if(NOT WIN32 AND "${kind}" STREQUAL "SHARED")
+              add_library(${ARGV} ${VERSION_FILE_PATH})
+            else()
+              add_library(${ARGV})
+            endif()
+            if(DEFINED CLR_CMAKE_YY_THUNKS_OBJ AND NOT "${CLR_CMAKE_YY_THUNKS_OBJ}" STREQUAL "" AND "${kind}" STREQUAL "SHARED")
+              get_target_property(__yy_link_flags ${targetName} LINK_FLAGS)
+              if(NOT __yy_link_flags MATCHES "/NOENTRY")
+                target_link_options(${targetName} PRIVATE "/SUBSYSTEM:WINDOWS,5.01" "/ENTRY:DllMainCRTStartupForYY_Thunks" "/alternatename:_YY_ThunksOriginalDllMainCRTStartup@12=_DllMainCRTStartup@12")
+              endif()
+            endif()
+            if("${kind}" STREQUAL "SHARED" AND NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
+              strip_symbols(${ARGV0} symbolFile)
+            endif()
+          endfunction()
+          '@
+
+          Replace-InFile `
+            -Path 'eng\native\functions.cmake' `
+            -Old $nativeFunctionsOld `
+            -New $nativeFunctionsNew
+
+      - name: Compose XP CMake arguments
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $vcLtlInclude = $env:VC_LTL_INCLUDE.Replace('\', '/')
+          $vcLtlPlatformInclude = $env:VC_LTL_PLATFORM_INCLUDE.Replace('\', '/')
+          $vcLtlLib = $env:VC_LTL_LIB.Replace('\', '/')
+          $yyThunksObj = $env:YY_THUNKS_OBJ.Replace('\', '/')
+
+          $cFlags = "/I$vcLtlInclude /I$vcLtlPlatformInclude"
+          $cxxFlags = $cFlags
+          $commonLinkerFlags = "/LIBPATH:$vcLtlLib $yyThunksObj /SUBSYSTEM:WINDOWS,5.01"
+
+          $cmakeOverlayDir = Join-Path $env:GITHUB_WORKSPACE '.tools\xp-cmake'
+          New-Item -ItemType Directory -Force -Path $cmakeOverlayDir | Out-Null
+          $cmakeInit = Join-Path $cmakeOverlayDir 'xp-cmake-init.cmake'
+          $cmakeInitForward = $cmakeInit.Replace('\', '/')
+
+          $cmakeInitContent = @"
+          set(CMAKE_SYSTEM_VERSION "$env:XP_TARGET_PLATFORM_MIN_VERSION" CACHE STRING "" FORCE)
+          set(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MINIMUM "$env:XP_TARGET_PLATFORM_MIN_VERSION" CACHE STRING "" FORCE)
+          set(CMAKE_C_FLAGS_INIT "$cFlags" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_FLAGS_INIT "$cxxFlags" CACHE STRING "" FORCE)
+          set(CMAKE_C_FLAGS "$cFlags" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_FLAGS "$cxxFlags" CACHE STRING "" FORCE)
+          set(CMAKE_C_FLAGS_RELEASE "$cFlags" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_FLAGS_RELEASE "$cxxFlags" CACHE STRING "" FORCE)
+          set(CMAKE_C_STANDARD_LIBRARIES "$commonLinkerFlags" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_STANDARD_LIBRARIES "$commonLinkerFlags" CACHE STRING "" FORCE)
+          set(CMAKE_SHARED_LINKER_FLAGS "$commonLinkerFlags" CACHE STRING "" FORCE)
+          set(CMAKE_EXE_LINKER_FLAGS "$commonLinkerFlags" CACHE STRING "" FORCE)
+          set(CLR_CMAKE_YY_THUNKS_OBJ "$yyThunksObj" CACHE STRING "" FORCE)
+          "@
+          Set-Content -LiteralPath $cmakeInit -Value $cmakeInitContent -NoNewline
+
+          $cmakeArgs = "-C $cmakeInitForward -DCMAKE_SYSTEM_VERSION=$env:XP_TARGET_PLATFORM_MIN_VERSION"
+
+          "XP_CMAKE_ARGS=$cmakeArgs" >> $env:GITHUB_ENV
+          Write-Host "XP CMake init: $cmakeInit"
+          Get-Content -LiteralPath $cmakeInit
+
+      - name: Build native runtime components
+        shell: cmd
+        run: >
+          build.cmd
+          clr.runtime+clr.jit+libs.native+host.native
+          -arch %XP_TARGET_ARCH%
+          -os windows
+          -configuration %XP_TARGET_CONFIGURATION%
+          -runtimeConfiguration %XP_TARGET_CONFIGURATION%
+          -librariesConfiguration %XP_TARGET_CONFIGURATION%
+          -hostConfiguration %XP_TARGET_CONFIGURATION%
+          -runtimeFlavor CoreCLR
+          -cmakeargs "%XP_CMAKE_ARGS%"
+          /p:TargetRid=%XP_TARGET_RID%
+          /p:PortableBuild=true
+          /p:NoPgoOptimize=true
+          /p:RunAnalyzers=false
+          /p:WindowsTargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
+          /p:TargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
+
+      - name: Collect runtime payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $payload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          if (Test-Path $payload) {
+            Remove-Item -LiteralPath $payload -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $payload | Out-Null
+
+          $candidateRoots = @(
+            Join-Path $env:GITHUB_WORKSPACE 'artifacts\bin\coreclr\windows.x86.Release',
+            Join-Path $env:GITHUB_WORKSPACE 'artifacts\bin\native\net10.0-windows-Release-x86',
+            Join-Path $env:GITHUB_WORKSPACE 'artifacts\bin\win-x86.Release\corehost'
+          )
+
+          foreach ($root in $candidateRoots) {
+            if (Test-Path $root) {
+              Get-ChildItem -Path $root -Recurse -File |
+                Where-Object { $_.Extension -in '.dll', '.exe' } |
+                ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload $_.Name) -Force
+              }
+            } else {
+              Write-Host "Skipping missing artifact root: $root"
+            }
+          }
+
+          $required = @(
+            'coreclr.dll',
+            'clrjit.dll',
+            'hostfxr.dll',
+            'hostpolicy.dll',
+            'dotnet.exe'
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path (Join-Path $payload $file))) {
+              throw "Required runtime payload file is missing: $file"
+            }
+          }
+
+          Get-ChildItem -Path $payload | Sort-Object Name | Format-Table Name,Length
+
+      - name: Verify PE imports and subsystem
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $payload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          $dumpbin = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = & $dumpbin -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsPath) {
+            throw 'Visual Studio with VC tools was not found.'
+          }
+
+          $dumpbinExe = Get-ChildItem -Path (Join-Path $vsPath 'VC\Tools\MSVC') -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -like '*\Hostx64\x86\dumpbin.exe' } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbinExe) {
+            throw 'dumpbin.exe for Hostx64\x86 was not found.'
+          }
+
+          $blockedImports = @(
+            'api-ms-win-',
+            'ext-ms-win-',
+            'GetTempPath2W',
+            'IsWow64Process2',
+            'GetLogicalProcessorInformationEx',
+            'GetProcessGroupAffinity',
+            'GetTickCount64',
+            'QueueUserAPC2',
+            'SetThreadDescription',
+            'GetSystemTimePreciseAsFileTime',
+            'InitializeCriticalSectionEx'
+          )
+
+          $failures = @()
+          Get-ChildItem -Path $payload -File |
+            Where-Object { $_.Extension -in '.dll', '.exe' } |
+            ForEach-Object {
+            $imports = & $dumpbinExe /DEPENDENTS /IMPORTS $_.FullName 2>&1 | Out-String
+            foreach ($blocked in $blockedImports) {
+              if ($imports -match [regex]::Escape($blocked)) {
+                $failures += "$($_.Name) imports $blocked"
+              }
+            }
+
+            $headers = & $dumpbinExe /HEADERS $_.FullName 2>&1 | Out-String
+            if ($headers -notmatch '5\.01 subsystem version') {
+              $failures += "$($_.Name) is not linked with Windows XP x86 subsystem version 5.01"
+            }
+          }
+
+          if ($failures.Count -gt 0) {
+            $failures | ForEach-Object { Write-Error $_ }
+            throw 'XP compatibility verification failed.'
+          }
+
+      - name: Pack artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stamp = Get-Date -AsUTC -Format 'yyyyMMdd-HHmmss'
+          Compress-Archive `
+            -Path "$env:GITHUB_WORKSPACE\staging\windows-xp-x86-runtime\*" `
+            -DestinationPath "$env:GITHUB_WORKSPACE\dotnet-runtime-windows-xp-x86-$stamp.zip" `
+            -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-runtime-windows-xp-x86
+          path: dotnet-runtime-windows-xp-x86-*.zip
+          retention-days: 30
