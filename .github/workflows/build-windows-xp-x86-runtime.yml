@@ -220,7 +220,7 @@ jobs:
             if(DEFINED CLR_CMAKE_YY_THUNKS_OBJ AND NOT "${CLR_CMAKE_YY_THUNKS_OBJ}" STREQUAL "" AND "${kind}" STREQUAL "SHARED")
               get_target_property(__yy_link_flags ${targetName} LINK_FLAGS)
               if(NOT __yy_link_flags MATCHES "/NOENTRY")
-                target_link_options(${targetName} PRIVATE "/SUBSYSTEM:WINDOWS,5.01" "/ENTRY:DllMainCRTStartupForYY_Thunks" "/alternatename:_YY_ThunksOriginalDllMainCRTStartup@12=_DllMainCRTStartup@12")
+                target_link_options(${targetName} PRIVATE "/SUBSYSTEM:WINDOWS,5.01" "/ENTRY:DllMainCRTStartupForYY_Thunks" "/alternatename:_YY_ThunksOriginalDllMainCRTStartup@12=__DllMainCRTStartup@12")
               endif()
             endif()
             if("${kind}" STREQUAL "SHARED" AND NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
