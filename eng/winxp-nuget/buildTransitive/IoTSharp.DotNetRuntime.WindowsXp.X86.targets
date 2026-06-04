@@ -1,0 +1,83 @@
+<Project>
+  <PropertyGroup>
+    <IoTSharpWindowsXpRuntimeReplacementEnabled Condition="'$(IoTSharpWindowsXpRuntimeReplacementEnabled)' == ''">true</IoTSharpWindowsXpRuntimeReplacementEnabled>
+    <IoTSharpWindowsXpRuntimeRid Condition="'$(IoTSharpWindowsXpRuntimeRid)' == ''">win-x86</IoTSharpWindowsXpRuntimeRid>
+    <_IoTSharpWindowsXpRuntimePackageRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</_IoTSharpWindowsXpRuntimePackageRoot>
+    <_IoTSharpWindowsXpRuntimePayloadDir>$([MSBuild]::NormalizeDirectory('$(_IoTSharpWindowsXpRuntimePackageRoot)', 'tools', 'winxp', 'win-x86'))</_IoTSharpWindowsXpRuntimePayloadDir>
+    <_IoTSharpWindowsXpRuntimeAppHostPath>$([MSBuild]::NormalizePath('$(_IoTSharpWindowsXpRuntimePayloadDir)', 'apphost.exe'))</_IoTSharpWindowsXpRuntimeAppHostPath>
+    <_IoTSharpWindowsXpRuntimeSingleFileHostPath>$([MSBuild]::NormalizePath('$(_IoTSharpWindowsXpRuntimePayloadDir)', 'singlefilehost.exe'))</_IoTSharpWindowsXpRuntimeSingleFileHostPath>
+  </PropertyGroup>
+
+  <Target Name="IoTSharpUseWindowsXpAppHost"
+          BeforeTargets="_GetAppHostPaths"
+          Condition="'$(IoTSharpWindowsXpRuntimeReplacementEnabled)' == 'true'
+                     and '$(RuntimeIdentifier)' == '$(IoTSharpWindowsXpRuntimeRid)'
+                     and ('$(SelfContained)' == 'true' or '$(PublishSelfContained)' == 'true')">
+    <Error Condition="'$(PublishSingleFile)' == 'true'"
+           Text="IoTSharp Windows XP runtime replacement does not support PublishSingleFile=true. Publish without single-file so runtime .dll files can be replaced." />
+    <Error Condition="!Exists('$(_IoTSharpWindowsXpRuntimeAppHostPath)')"
+           Text="No IoTSharp Windows XP apphost was found at '$(_IoTSharpWindowsXpRuntimeAppHostPath)'." />
+    <Error Condition="!Exists('$(_IoTSharpWindowsXpRuntimeSingleFileHostPath)')"
+           Text="No IoTSharp Windows XP singlefilehost was found at '$(_IoTSharpWindowsXpRuntimeSingleFileHostPath)'." />
+
+    <PropertyGroup>
+      <UseAppHostFromAssetsFile>false</UseAppHostFromAssetsFile>
+      <AppHostSourcePath>$(_IoTSharpWindowsXpRuntimeAppHostPath)</AppHostSourcePath>
+      <SingleFileHostSourcePath>$(_IoTSharpWindowsXpRuntimeSingleFileHostPath)</SingleFileHostSourcePath>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ResolvedAppHostPack Remove="@(ResolvedAppHostPack)" />
+      <ResolvedSingleFileHostPack Remove="@(ResolvedSingleFileHostPack)" />
+      <ResolvedAppHostPack Include="$(_IoTSharpWindowsXpRuntimeAppHostPath)">
+        <Path>$(_IoTSharpWindowsXpRuntimeAppHostPath)</Path>
+        <PackageDirectory>$(_IoTSharpWindowsXpRuntimePayloadDir)</PackageDirectory>
+        <PathInPackage>apphost.exe</PathInPackage>
+      </ResolvedAppHostPack>
+      <ResolvedSingleFileHostPack Include="$(_IoTSharpWindowsXpRuntimeSingleFileHostPath)">
+        <Path>$(_IoTSharpWindowsXpRuntimeSingleFileHostPath)</Path>
+        <PackageDirectory>$(_IoTSharpWindowsXpRuntimePayloadDir)</PackageDirectory>
+        <PathInPackage>singlefilehost.exe</PathInPackage>
+      </ResolvedSingleFileHostPack>
+    </ItemGroup>
+
+    <Message Importance="high"
+             Text="Using IoTSharp Windows XP apphost templates from '$(_IoTSharpWindowsXpRuntimePayloadDir)'." />
+  </Target>
+
+  <Target Name="IoTSharpReplaceWindowsXpRuntimeDlls"
+          AfterTargets="Publish"
+          Condition="'$(IoTSharpWindowsXpRuntimeReplacementEnabled)' == 'true'
+                     and '$(RuntimeIdentifier)' == '$(IoTSharpWindowsXpRuntimeRid)'
+                     and ('$(SelfContained)' == 'true' or '$(PublishSelfContained)' == 'true')">
+    <Error Condition="'$(PublishSingleFile)' == 'true'"
+           Text="IoTSharp Windows XP runtime replacement does not support PublishSingleFile=true. Publish without single-file so runtime .dll files can be replaced." />
+
+    <PropertyGroup>
+      <_IoTSharpWindowsXpPublishDir>$([MSBuild]::NormalizeDirectory('$(PublishDir)'))</_IoTSharpWindowsXpPublishDir>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_IoTSharpWindowsXpRuntimeDll Include="$(_IoTSharpWindowsXpRuntimePayloadDir)*.dll" />
+    </ItemGroup>
+
+    <Error Condition="'@(_IoTSharpWindowsXpRuntimeDll)' == ''"
+           Text="No IoTSharp Windows XP runtime .dll files were found in '$(_IoTSharpWindowsXpRuntimePayloadDir)'." />
+    <Error Condition="'$(_IoTSharpWindowsXpPublishDir)' == ''"
+           Text="PublishDir is empty, so IoTSharp Windows XP runtime .dll files cannot be copied." />
+    <Error Condition="!Exists('$(_IoTSharpWindowsXpPublishDir)coreclr.dll')"
+           Text="The publish output does not contain coreclr.dll. Use a win-x86 self-contained publish output before applying IoTSharp Windows XP runtime replacement." />
+
+    <Message Importance="high"
+             Text="Replacing win-x86 runtime .dll files with IoTSharp Windows XP build from '$(_IoTSharpWindowsXpRuntimePayloadDir)'." />
+
+    <Copy SourceFiles="@(_IoTSharpWindowsXpRuntimeDll)"
+          DestinationFiles="@(_IoTSharpWindowsXpRuntimeDll->'$(_IoTSharpWindowsXpPublishDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="false"
+          OverwriteReadOnlyFiles="true" />
+
+    <ItemGroup>
+      <FileWrites Include="@(_IoTSharpWindowsXpRuntimeDll->'$(_IoTSharpWindowsXpPublishDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>IoTSharp.DotNetRuntime.WindowsXp.X86</PackageId>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">10.0.0-winxp.local</PackageVersion>
+    <Authors>IoTSharp</Authors>
+    <Company>IoTSharp</Company>
+    <Description>Replaces win-x86 self-contained publish output with IoTSharp .NET runtime native binaries built for Windows XP x86.</Description>
+    <PackageTags>dotnet;runtime;win-x86;x86;windows-xp;winxp;iotsharp</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/IoTSharp/dotnet_arm32</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/IoTSharp/dotnet_arm32</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <WinXpPayloadDir Condition="'$(WinXpPayloadDir)' == ''">$(MSBuildProjectDirectory)/payload/win-x86</WinXpPayloadDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="buildTransitive/$(PackageId).targets" Pack="true" PackagePath="buildTransitive/" />
+    <None Include="$(WinXpPayloadDir)/*.dll" Pack="true" PackagePath="tools/winxp/win-x86/" />
+    <None Include="$(WinXpPayloadDir)/apphost.exe" Pack="true" PackagePath="tools/winxp/win-x86/" />
+    <None Include="$(WinXpPayloadDir)/singlefilehost.exe" Pack="true" PackagePath="tools/winxp/win-x86/" />
+  </ItemGroup>
+
+  <Target Name="ValidateWinXpPayload" BeforeTargets="Pack">
+    <ItemGroup>
+      <_WinXpPayloadDll Include="$(WinXpPayloadDir)/*.dll" />
+    </ItemGroup>
+
+    <Error Condition="'@(_WinXpPayloadDll)' == ''"
+           Text="No .dll files were found in WinXpPayloadDir='$(WinXpPayloadDir)'." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/coreclr.dll')"
+           Text="WinXpPayloadDir must contain coreclr.dll." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/clrjit.dll')"
+           Text="WinXpPayloadDir must contain clrjit.dll." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/hostpolicy.dll')"
+           Text="WinXpPayloadDir must contain hostpolicy.dll." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/hostfxr.dll')"
+           Text="WinXpPayloadDir must contain hostfxr.dll." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/apphost.exe')"
+           Text="WinXpPayloadDir must contain apphost.exe." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/singlefilehost.exe')"
+           Text="WinXpPayloadDir must contain singlefilehost.exe." />
+  </Target>
+</Project>

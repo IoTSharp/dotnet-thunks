@@ -3,6 +3,10 @@ name: build-windows-xp-x86-runtime
 on:
   workflow_dispatch:
     inputs:
+      packageVersion:
+        description: Optional NuGet package version override
+        required: false
+        type: string
       vcltlVersion:
         description: VC-LTL NuGet package version
         required: false
@@ -24,6 +28,8 @@ on:
   push:
     branches:
       - release/10.0
+    tags:
+      - v*
     paths:
       - .github/workflows/build-windows-xp-x86-runtime.yml
       - eng/**
@@ -31,7 +37,8 @@ on:
       - src/native/**
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
 
 concurrency:
   group: build-windows-xp-x86-runtime-${{ github.ref }}
@@ -45,6 +52,9 @@ env:
   XP_TARGET_CONFIGURATION: Release
   XP_TARGET_PLATFORM_MIN_VERSION: 5.1.2600
   XP_TARGET_PLATFORM_MIN_VERSION_FULL: 5.1.2600.0
+  WINXP_NUGET_PACKAGE_ID: IoTSharp.DotNetRuntime.WindowsXp.X86
+  NUGET_SOURCE: https://api.nuget.org/v3/index.json
+  GITHUB_NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
   VC_LTL_VERSION: ${{ github.event.inputs.vcltlVersion || '5.3.1' }}
   YY_THUNKS_VERSION: ${{ github.event.inputs.yyThunksVersion || '1.2.1' }}
 
@@ -391,6 +401,75 @@ jobs:
             throw 'XP compatibility verification failed.'
           }
 
+      - name: Prepare NuGet payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $payload = Join-Path $env:GITHUB_WORKSPACE 'artifacts\winxp-nuget-payload\win-x86'
+          if (Test-Path $payload) {
+            Remove-Item -LiteralPath $payload -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $payload | Out-Null
+
+          $runtimePayload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          Get-ChildItem -Path $runtimePayload -File |
+            Where-Object { $_.Extension -eq '.dll' -or $_.Name -in @('apphost.exe', 'singlefilehost.exe') } |
+            ForEach-Object {
+              Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload $_.Name) -Force
+            }
+
+          $required = @(
+            'coreclr.dll',
+            'clrjit.dll',
+            'hostfxr.dll',
+            'hostpolicy.dll',
+            'apphost.exe',
+            'singlefilehost.exe'
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path (Join-Path $payload $file))) {
+              throw "Required NuGet payload file is missing: $file"
+            }
+          }
+
+          Get-ChildItem -Path $payload | Sort-Object Name | Format-Table Name,Length
+
+      - name: Compute NuGet package version
+        id: package_version
+        shell: pwsh
+        env:
+          PACKAGE_VERSION_OVERRIDE: ${{ github.event.inputs.packageVersion }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -like 'v*') {
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:PACKAGE_VERSION_OVERRIDE)) {
+            $version = $env:PACKAGE_VERSION_OVERRIDE
+          } else {
+            $versionsProps = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'eng\Versions.props') -Raw
+            $major = [regex]::Match($versionsProps, '<MajorVersion>([^<]*)</MajorVersion>').Groups[1].Value
+            $minor = [regex]::Match($versionsProps, '<MinorVersion>([^<]*)</MinorVersion>').Groups[1].Value
+            $patch = [regex]::Match($versionsProps, '<PatchVersion>([^<]*)</PatchVersion>').Groups[1].Value
+            $version = "$major.$minor.$patch-winxp.$env:GITHUB_RUN_NUMBER"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "NuGet package version: $version"
+
+      - name: Pack NuGet package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          .\dotnet.cmd pack "eng\winxp-nuget\$env:WINXP_NUGET_PACKAGE_ID.csproj" `
+            --configuration Release `
+            --output "$env:GITHUB_WORKSPACE\artifacts\packages\winxp" `
+            /p:PackageVersion="${{ steps.package_version.outputs.version }}" `
+            /p:WinXpPayloadDir="$env:GITHUB_WORKSPACE\artifacts\winxp-nuget-payload\win-x86"
+
       - name: Pack artifact
         shell: pwsh
         run: |
@@ -407,3 +486,70 @@ jobs:
           name: dotnet-runtime-windows-xp-x86
           path: dotnet-runtime-windows-xp-x86-*.zip
           retention-days: 30
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-runtime-windows-xp-x86-nuget
+          path: artifacts/packages/winxp/*.nupkg
+          retention-days: 30
+
+      - name: Publish NuGet package
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
+            Write-Error 'Missing NuGet API key. Add an organization or repository secret named NUGET_API_KEY.'
+            exit 1
+          }
+
+          Get-ChildItem -Path "$env:GITHUB_WORKSPACE\artifacts\packages\winxp" -Filter '*.nupkg' | ForEach-Object {
+            .\dotnet.cmd nuget push $_.FullName `
+              --api-key "$env:NUGET_API_KEY" `
+              --source "$env:NUGET_SOURCE" `
+              --skip-duplicate
+
+            .\dotnet.cmd nuget push $_.FullName `
+              --api-key "$env:GITHUB_TOKEN" `
+              --source "$env:GITHUB_NUGET_SOURCE" `
+              --skip-duplicate
+          }
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $assets = @()
+          $assets += Get-ChildItem -Path "$env:GITHUB_WORKSPACE\dotnet-runtime-windows-xp-x86-*.zip"
+          $assets += Get-ChildItem -Path "$env:GITHUB_WORKSPACE\artifacts\packages\winxp\*.nupkg"
+
+          try {
+            gh release view "$env:GITHUB_REF_NAME" --repo "$env:GITHUB_REPOSITORY" *> $null
+            $releaseExists = $LASTEXITCODE -eq 0
+          } catch {
+            $releaseExists = $false
+          }
+
+          if ($releaseExists) {
+            foreach ($asset in $assets) {
+              gh release upload "$env:GITHUB_REF_NAME" "$($asset.FullName)" --repo "$env:GITHUB_REPOSITORY" --clobber
+            }
+          } else {
+            gh release create "$env:GITHUB_REF_NAME" `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --title "$env:GITHUB_REF_NAME" `
+              --notes "IoTSharp Windows XP x86 runtime build for $env:GITHUB_REF_NAME."
+
+            foreach ($asset in $assets) {
+              gh release upload "$env:GITHUB_REF_NAME" "$($asset.FullName)" --repo "$env:GITHUB_REPOSITORY" --clobber
+            }
+          }
