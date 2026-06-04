@@ -211,6 +211,38 @@ jobs:
           endfunction()
           '@
           $nativeFunctionsNew = @'
+          function(apply_yy_thunks_to_target targetName)
+            if(NOT CLR_CMAKE_TARGET_WIN32 OR NOT DEFINED CLR_CMAKE_YY_THUNKS_OBJ OR "${CLR_CMAKE_YY_THUNKS_OBJ}" STREQUAL "")
+              return()
+            endif()
+
+            get_target_property(__yy_target_type ${targetName} TYPE)
+            if(NOT "${__yy_target_type}" STREQUAL "EXECUTABLE" AND NOT "${__yy_target_type}" STREQUAL "SHARED_LIBRARY")
+              return()
+            endif()
+
+            get_target_property(__yy_link_flags ${targetName} LINK_FLAGS)
+            if(NOT __yy_link_flags)
+              set(__yy_link_flags "")
+            endif()
+            get_target_property(__yy_link_options ${targetName} LINK_OPTIONS)
+            if(NOT __yy_link_options)
+              set(__yy_link_options "")
+            endif()
+
+            set(__yy_all_link_options "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_SHARED_LINKER_FLAGS} ${__yy_link_flags} ${__yy_link_options}")
+            if(__yy_all_link_options MATCHES "(^|[ ;])/NOENTRY($|[ ;])")
+              return()
+            endif()
+
+            set_source_files_properties("${CLR_CMAKE_YY_THUNKS_OBJ}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+            target_sources(${targetName} PRIVATE "${CLR_CMAKE_YY_THUNKS_OBJ}")
+
+            if("${__yy_target_type}" STREQUAL "SHARED_LIBRARY" AND CLR_CMAKE_TARGET_ARCH_I386)
+              target_link_options(${targetName} PRIVATE "/ENTRY:DllMainCRTStartupForYY_Thunks" "/alternatename:_YY_ThunksOriginalDllMainCRTStartup@12=__DllMainCRTStartup@12")
+            endif()
+          endfunction()
+
           function(add_executable_clr targetName)
             if(NOT WIN32)
               add_executable(${ARGV} ${VERSION_FILE_PATH})
@@ -218,6 +250,7 @@ jobs:
             else()
               add_executable(${ARGV})
             endif(NOT WIN32)
+            apply_yy_thunks_to_target(${targetName})
             add_sanitizer_runtime_support(${targetName})
             if(NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
               strip_symbols(${ARGV0} symbolFile)
@@ -230,12 +263,7 @@ jobs:
             else()
               add_library(${ARGV})
             endif()
-            if(DEFINED CLR_CMAKE_YY_THUNKS_OBJ AND NOT "${CLR_CMAKE_YY_THUNKS_OBJ}" STREQUAL "" AND "${kind}" STREQUAL "SHARED")
-              get_target_property(__yy_link_flags ${targetName} LINK_FLAGS)
-              if(NOT __yy_link_flags MATCHES "/NOENTRY")
-                target_link_options(${targetName} PRIVATE "/SUBSYSTEM:WINDOWS,5.01" "/ENTRY:DllMainCRTStartupForYY_Thunks" "/alternatename:_YY_ThunksOriginalDllMainCRTStartup@12=__DllMainCRTStartup@12")
-              endif()
-            endif()
+            apply_yy_thunks_to_target(${targetName})
             if("${kind}" STREQUAL "SHARED" AND NOT CLR_CMAKE_KEEP_NATIVE_SYMBOLS)
               strip_symbols(${ARGV0} symbolFile)
             endif()
@@ -246,6 +274,110 @@ jobs:
             -Path 'eng\native\functions.cmake' `
             -Old $nativeFunctionsOld `
             -New $nativeFunctionsNew
+
+          Replace-InFile `
+            -Path 'src\native\corehost\dotnet\CMakeLists.txt' `
+            -Old 'add_executable(dotnet ${SOURCES})' `
+            -New @'
+          add_executable(dotnet ${SOURCES})
+          apply_yy_thunks_to_target(dotnet)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\apphost\standalone\CMakeLists.txt' `
+            -Old 'add_executable(apphost ${SOURCES} ${RESOURCES})' `
+            -New @'
+          add_executable(apphost ${SOURCES} ${RESOURCES})
+          apply_yy_thunks_to_target(apphost)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\apphost\static\CMakeLists.txt' `
+            -Old 'add_executable(singlefilehost ${SOURCES})' `
+            -New @'
+          add_executable(singlefilehost ${SOURCES})
+          apply_yy_thunks_to_target(singlefilehost)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\fxr\standalone\CMakeLists.txt' `
+            -Old 'add_library(hostfxr SHARED ${SOURCES})' `
+            -New @'
+          add_library(hostfxr SHARED ${SOURCES})
+          apply_yy_thunks_to_target(hostfxr)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\hostpolicy\standalone\CMakeLists.txt' `
+            -Old 'add_library(hostpolicy SHARED ${SOURCES})' `
+            -New @'
+          add_library(hostpolicy SHARED ${SOURCES})
+          apply_yy_thunks_to_target(hostpolicy)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\nethost\CMakeLists.txt' `
+            -Old 'add_library(nethost SHARED ${SOURCES})' `
+            -New @'
+          add_library(nethost SHARED ${SOURCES})
+          apply_yy_thunks_to_target(nethost)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\comhost\CMakeLists.txt' `
+            -Old 'add_library(comhost SHARED ${SOURCES})' `
+            -New @'
+          add_library(comhost SHARED ${SOURCES})
+          apply_yy_thunks_to_target(comhost)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\corehost\ijwhost\CMakeLists.txt' `
+            -Old 'add_library(ijwhost SHARED ${SOURCES} ${RESOURCES})' `
+            -New @'
+          add_library(ijwhost SHARED ${SOURCES} ${RESOURCES})
+          apply_yy_thunks_to_target(ijwhost)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\libs\System.Globalization.Native\CMakeLists.txt' `
+            -Old @'
+                  add_library(System.Globalization.Native
+                      SHARED
+                      ${NATIVEGLOBALIZATION_SOURCES}
+                      System.Globalization.Native.def
+                      ${VERSION_FILE_RC_PATH}
+                  )
+          '@ `
+            -New @'
+                  add_library(System.Globalization.Native
+                      SHARED
+                      ${NATIVEGLOBALIZATION_SOURCES}
+                      System.Globalization.Native.def
+                      ${VERSION_FILE_RC_PATH}
+                  )
+                  apply_yy_thunks_to_target(System.Globalization.Native)
+          '@
+
+          Replace-InFile `
+            -Path 'src\native\libs\System.IO.Compression.Native\CMakeLists.txt' `
+            -Old @'
+                  add_library(System.IO.Compression.Native
+                      SHARED
+                      ${NATIVECOMPRESSION_SOURCES}
+                      System.IO.Compression.Native.def
+                      ${VERSION_FILE_RC_PATH}
+                  )
+          '@ `
+            -New @'
+                  add_library(System.IO.Compression.Native
+                      SHARED
+                      ${NATIVECOMPRESSION_SOURCES}
+                      System.IO.Compression.Native.def
+                      ${VERSION_FILE_RC_PATH}
+                  )
+                  apply_yy_thunks_to_target(System.IO.Compression.Native)
+          '@
 
       - name: Compose XP CMake arguments
         shell: pwsh
@@ -259,7 +391,7 @@ jobs:
 
           $cFlags = "/I$vcLtlInclude /I$vcLtlPlatformInclude"
           $cxxFlags = $cFlags
-          $commonLinkerFlags = "/LIBPATH:$vcLtlLib $yyThunksObj"
+          $commonLinkerFlags = "/LIBPATH:$vcLtlLib"
 
           $cmakeOverlayDir = Join-Path $env:GITHUB_WORKSPACE '.tools\xp-cmake'
           New-Item -ItemType Directory -Force -Path $cmakeOverlayDir | Out-Null
@@ -275,10 +407,8 @@ jobs:
           set(CMAKE_CXX_FLAGS "$cxxFlags" CACHE STRING "" FORCE)
           set(CMAKE_C_FLAGS_RELEASE "$cFlags" CACHE STRING "" FORCE)
           set(CMAKE_CXX_FLAGS_RELEASE "$cxxFlags" CACHE STRING "" FORCE)
-          set(CMAKE_C_STANDARD_LIBRARIES "$commonLinkerFlags" CACHE STRING "" FORCE)
-          set(CMAKE_CXX_STANDARD_LIBRARIES "$commonLinkerFlags" CACHE STRING "" FORCE)
-          set(CMAKE_SHARED_LINKER_FLAGS "$commonLinkerFlags" CACHE STRING "" FORCE)
-          set(CMAKE_EXE_LINKER_FLAGS "$commonLinkerFlags" CACHE STRING "" FORCE)
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT "$commonLinkerFlags" CACHE STRING "" FORCE)
+          set(CMAKE_EXE_LINKER_FLAGS_INIT "$commonLinkerFlags" CACHE STRING "" FORCE)
           set(CLR_CMAKE_YY_THUNKS_OBJ "$yyThunksObj" CACHE STRING "" FORCE)
           "@
           Set-Content -LiteralPath $cmakeInit -Value $cmakeInitContent -NoNewline
