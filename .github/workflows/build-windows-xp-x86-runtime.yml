@@ -530,11 +530,15 @@ jobs:
           $nonShippingPayloadDirectories = @(
             'cdac-build-tool'
           )
+          $excludedPayloadFileNames = @(
+            'msquic.dll'
+          )
 
           foreach ($root in $candidateRoots) {
             if (Test-Path $root) {
               Get-ChildItem -Path $root -Recurse -File |
                 Where-Object { $_.Extension -in '.dll', '.exe' } |
+                Where-Object { $_.Name -notin $excludedPayloadFileNames } |
                 Where-Object {
                   $relativePath = [System.IO.Path]::GetRelativePath($root, $_.FullName)
                   $topLevelDirectory = ($relativePath -split '[\\/]')[0]
@@ -653,6 +657,17 @@ jobs:
             throw "Portable runtime is missing shared\Microsoft.NETCore.App\<version>."
           }
 
+          $nonXpCompatibleOptionalFiles = @(
+            'msquic.dll'
+          )
+          foreach ($fileName in $nonXpCompatibleOptionalFiles) {
+            Get-ChildItem -Path $portableRoot -Recurse -File -Filter $fileName |
+              ForEach-Object {
+                Write-Host "Removing non-XP-compatible optional runtime file: $($_.FullName)"
+                Remove-Item -LiteralPath $_.FullName -Force
+              }
+          }
+
           $required = @(
             (Join-Path $portableRoot 'dotnet.exe'),
             (Join-Path $hostFxrDir.FullName 'hostfxr.dll'),
@@ -681,6 +696,11 @@ jobs:
           $coreLibVersion = Get-FileVersionPrefix((Get-Item -LiteralPath (Join-Path $sharedFxDir.FullName 'System.Private.CoreLib.dll')).VersionInfo.FileVersion)
           if ($coreClrVersion -ne $coreLibVersion) {
             throw "coreclr.dll and System.Private.CoreLib.dll are not from the same build. coreclr=$coreClrVersion corelib=$coreLibVersion"
+          }
+
+          $blockedPortableFiles = Get-ChildItem -Path $portableRoot -Recurse -File -Include $nonXpCompatibleOptionalFiles
+          if ($blockedPortableFiles) {
+            throw "Portable runtime still contains non-XP-compatible optional files: $($blockedPortableFiles.FullName -join ', ')"
           }
 
           $env:DOTNET_ROOT = $portableRoot
@@ -814,7 +834,12 @@ jobs:
             throw "Portable runtime is missing shared\Microsoft.NETCore.App\<version>."
           }
 
+          $excludedNuGetPayloadFileNames = @(
+            'msquic.dll'
+          )
+
           Get-ChildItem -Path $sharedFxDir.FullName -File -Filter '*.dll' |
+            Where-Object { $_.Name -notin $excludedNuGetPayloadFileNames } |
             ForEach-Object {
               Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload $_.Name) -Force
             }
