@@ -477,6 +477,26 @@ jobs:
           /p:TargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
           /p:BuildArchitecture=%XP_TARGET_ARCH%
 
+      - name: Build managed shared framework components
+        shell: cmd
+        run: >
+          build.cmd
+          clr.corelib+libs.sfx
+          -arch %XP_TARGET_ARCH%
+          -os windows
+          -configuration %XP_TARGET_CONFIGURATION%
+          -runtimeConfiguration %XP_TARGET_CONFIGURATION%
+          -librariesConfiguration %XP_TARGET_CONFIGURATION%
+          -hostConfiguration %XP_TARGET_CONFIGURATION%
+          -runtimeFlavor CoreCLR
+          /p:TargetRid=%XP_TARGET_RID%
+          /p:PortableBuild=true
+          /p:NoPgoOptimize=true
+          /p:RunAnalyzers=false
+          /p:WindowsTargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
+          /p:TargetPlatformMinVersion=%XP_TARGET_PLATFORM_MIN_VERSION%
+          /p:BuildArchitecture=%XP_TARGET_ARCH%
+
       - name: Dump native configure logs
         if: failure()
         shell: pwsh
@@ -491,12 +511,12 @@ jobs:
               Get-Content -LiteralPath $_.FullName -Tail 300
             }
 
-      - name: Collect runtime payload
+      - name: Collect XP replacement payload
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $payload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          $payload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-native-payload'
           if (Test-Path $payload) {
             Remove-Item -LiteralPath $payload -Recurse -Force
           }
@@ -533,6 +553,7 @@ jobs:
             'clrjit.dll',
             'hostfxr.dll',
             'hostpolicy.dll',
+            'System.Private.CoreLib.dll',
             'dotnet.exe'
           )
 
@@ -544,12 +565,147 @@ jobs:
 
           Get-ChildItem -Path $payload | Sort-Object Name | Format-Table Name,Length
 
+      - name: Publish portable runtime layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $portableRoot = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          if (Test-Path $portableRoot) {
+            Remove-Item -LiteralPath $portableRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $portableRoot | Out-Null
+
+          $commonProperties = @(
+            "/p:TargetOS=windows",
+            "/p:TargetArchitecture=$env:XP_TARGET_ARCH",
+            "/p:TargetRid=$env:XP_TARGET_RID",
+            "/p:RuntimeIdentifier=$env:XP_TARGET_RID",
+            "/p:Configuration=$env:XP_TARGET_CONFIGURATION",
+            "/p:RuntimeConfiguration=$env:XP_TARGET_CONFIGURATION",
+            "/p:CoreCLRConfiguration=$env:XP_TARGET_CONFIGURATION",
+            "/p:LibrariesConfiguration=$env:XP_TARGET_CONFIGURATION",
+            "/p:HostConfiguration=$env:XP_TARGET_CONFIGURATION",
+            "/p:RuntimeFlavor=CoreCLR",
+            "/p:PrimaryRuntimeFlavor=CoreCLR",
+            "/p:PublishReadyToRun=false",
+            "/p:GenerateInstallers=false",
+            "/p:IncludeDiaSymReaderNative=false",
+            "/p:PortableBuild=true",
+            "/p:NoPgoOptimize=true",
+            "/p:RunAnalyzers=false",
+            "/p:WindowsTargetPlatformMinVersion=$env:XP_TARGET_PLATFORM_MIN_VERSION",
+            "/p:TargetPlatformMinVersion=$env:XP_TARGET_PLATFORM_MIN_VERSION"
+          )
+
+          & .\dotnet.cmd msbuild src\installer\pkg\sfx\Microsoft.NETCore.App\Microsoft.NETCore.App.Runtime.CoreCLR.sfxproj `
+            /t:Restore `
+            "/p:MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" `
+            @commonProperties `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          & .\dotnet.cmd msbuild src\installer\pkg\sfx\installers\dotnet-host.proj `
+            /t:Restore `
+            "/p:MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" `
+            @commonProperties `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          & .\dotnet.cmd msbuild src\installer\pkg\sfx\installers\dotnet-hostfxr.proj `
+            /t:Restore `
+            "/p:MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" `
+            @commonProperties `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          & .\dotnet.cmd msbuild src\installer\pkg\sfx\bundle\Microsoft.NETCore.App.Bundle.bundleproj `
+            /restore `
+            /t:PublishToDisk `
+            "/p:OutputPath=$portableRoot\" `
+            @commonProperties `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $hostFxrDir = Get-ChildItem -Path (Join-Path $portableRoot 'host\fxr') -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $hostFxrDir) {
+            throw "Portable runtime is missing host\fxr\<version>."
+          }
+
+          $sharedFxDir = Get-ChildItem -Path (Join-Path $portableRoot 'shared\Microsoft.NETCore.App') -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $sharedFxDir) {
+            throw "Portable runtime is missing shared\Microsoft.NETCore.App\<version>."
+          }
+
+          $required = @(
+            (Join-Path $portableRoot 'dotnet.exe'),
+            (Join-Path $hostFxrDir.FullName 'hostfxr.dll'),
+            (Join-Path $sharedFxDir.FullName 'hostpolicy.dll'),
+            (Join-Path $sharedFxDir.FullName 'coreclr.dll'),
+            (Join-Path $sharedFxDir.FullName 'clrjit.dll'),
+            (Join-Path $sharedFxDir.FullName 'System.Private.CoreLib.dll'),
+            (Join-Path $sharedFxDir.FullName 'Microsoft.NETCore.App.deps.json'),
+            (Join-Path $sharedFxDir.FullName 'Microsoft.NETCore.App.runtimeconfig.json')
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath $file)) {
+              throw "Portable runtime required file is missing: $file"
+            }
+          }
+
+          function Get-FileVersionPrefix([string] $value) {
+            $parts = [regex]::Matches($value, '\d+') |
+              ForEach-Object { $_.Value } |
+              Select-Object -First 4
+            return ($parts -join '.')
+          }
+
+          $coreClrVersion = Get-FileVersionPrefix((Get-Item -LiteralPath (Join-Path $sharedFxDir.FullName 'coreclr.dll')).VersionInfo.FileVersion)
+          $coreLibVersion = Get-FileVersionPrefix((Get-Item -LiteralPath (Join-Path $sharedFxDir.FullName 'System.Private.CoreLib.dll')).VersionInfo.FileVersion)
+          if ($coreClrVersion -ne $coreLibVersion) {
+            throw "coreclr.dll and System.Private.CoreLib.dll are not from the same build. coreclr=$coreClrVersion corelib=$coreLibVersion"
+          }
+
+          $env:DOTNET_ROOT = $portableRoot
+          $env:DOTNET_MULTILEVEL_LOOKUP = '0'
+          $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+          $env:DOTNET_NOLOGO = '1'
+          & (Join-Path $portableRoot 'dotnet.exe') --info
+          if ($LASTEXITCODE -ne 0) {
+            throw "Portable runtime dotnet --info failed with exit code $LASTEXITCODE."
+          }
+
+          Get-ChildItem -Path $portableRoot -Recurse -File |
+            Sort-Object FullName |
+            Select-Object FullName,Length |
+            Format-Table -AutoSize
+
       - name: Verify PE imports and subsystem
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $payload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          $payloadRoots = @(
+            (Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-native-payload'),
+            (Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime')
+          )
           $dumpbin = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vsPath = & $dumpbin -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vsPath) {
@@ -577,10 +733,50 @@ jobs:
             'InitializeCriticalSectionEx'
           )
 
-          $failures = @()
-          Get-ChildItem -Path $payload -File |
+          $nativeFileNames = @(
+            'apphost.exe',
+            'clretwrc.dll',
+            'clrgc.dll',
+            'clrjit.dll',
+            'comhost.dll',
+            'CoreShim.dll',
+            'coreclr.dll',
+            'createdump.exe',
+            'dotnet.exe',
+            'hostfxr.dll',
+            'hostpolicy.dll',
+            'ijwhost.dll',
+            'Microsoft.DiaSymReader.Native.x86.dll',
+            'mscordbi.dll',
+            'mscorrc.dll',
+            'msquic.dll',
+            'nethost.dll',
+            'singlefilehost.exe',
+            'System.Globalization.Native.dll',
+            'System.IO.Compression.Native.dll',
+            'watchdog.exe'
+          )
+
+          function Test-IsKnownNativePayloadFile([System.IO.FileInfo] $file) {
+            if ($file.Name -in $nativeFileNames) {
+              return $true
+            }
+
+            return $file.Name -match '^mscordaccore.*\.dll$' -or
+                   $file.Name -match '^clrjit_.*\.dll$' -or
+                   $file.Name -match '^jitinterface_.*\.dll$'
+          }
+
+          $nativeFiles = Get-ChildItem -Path $payloadRoots -Recurse -File |
             Where-Object { $_.Extension -in '.dll', '.exe' } |
-            ForEach-Object {
+            Where-Object { Test-IsKnownNativePayloadFile $_ }
+
+          if (-not $nativeFiles) {
+            throw 'No native payload files were found for XP compatibility verification.'
+          }
+
+          $failures = @()
+          $nativeFiles | ForEach-Object {
             $imports = & $dumpbinExe /DEPENDENTS /IMPORTS $_.FullName 2>&1 | Out-String
             foreach ($blocked in $blockedImports) {
               if ($imports -match [regex]::Escape($blocked)) {
@@ -610,18 +806,39 @@ jobs:
           }
           New-Item -ItemType Directory -Force -Path $payload | Out-Null
 
-          $runtimePayload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
-          Get-ChildItem -Path $runtimePayload -File |
-            Where-Object { $_.Extension -eq '.dll' -or $_.Name -in @('apphost.exe', 'singlefilehost.exe') } |
+          $portableRoot = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-runtime'
+          $sharedFxDir = Get-ChildItem -Path (Join-Path $portableRoot 'shared\Microsoft.NETCore.App') -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $sharedFxDir) {
+            throw "Portable runtime is missing shared\Microsoft.NETCore.App\<version>."
+          }
+
+          Get-ChildItem -Path $sharedFxDir.FullName -File -Filter '*.dll' |
             ForEach-Object {
               Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $payload $_.Name) -Force
             }
+
+          $hostFxrDir = Get-ChildItem -Path (Join-Path $portableRoot 'host\fxr') -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $hostFxrDir) {
+            throw "Portable runtime is missing host\fxr\<version>."
+          }
+          Copy-Item -LiteralPath (Join-Path $hostFxrDir.FullName 'hostfxr.dll') -Destination (Join-Path $payload 'hostfxr.dll') -Force
+
+          $nativePayload = Join-Path $env:GITHUB_WORKSPACE 'staging\windows-xp-x86-native-payload'
+          foreach ($template in @('apphost.exe', 'singlefilehost.exe')) {
+            Copy-Item -LiteralPath (Join-Path $nativePayload $template) -Destination (Join-Path $payload $template) -Force
+          }
 
           $required = @(
             'coreclr.dll',
             'clrjit.dll',
             'hostfxr.dll',
             'hostpolicy.dll',
+            'System.Private.CoreLib.dll',
+            'System.Runtime.dll',
             'apphost.exe',
             'singlefilehost.exe'
           )
@@ -662,13 +879,15 @@ jobs:
 
       - name: Pack NuGet package
         shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
 
           .\dotnet.cmd pack "eng\winxp-nuget\$env:WINXP_NUGET_PACKAGE_ID.csproj" `
             --configuration Release `
             --output "$env:GITHUB_WORKSPACE\artifacts\packages\winxp" `
-            /p:PackageVersion="${{ steps.package_version.outputs.version }}" `
+            "/p:PackageVersion=$env:PACKAGE_VERSION" `
             /p:WinXpPayloadDir="$env:GITHUB_WORKSPACE\artifacts\winxp-nuget-payload\win-x86"
 
       - name: Pack artifact
@@ -678,14 +897,14 @@ jobs:
           $stamp = Get-Date -AsUTC -Format 'yyyyMMdd-HHmmss'
           Compress-Archive `
             -Path "$env:GITHUB_WORKSPACE\staging\windows-xp-x86-runtime\*" `
-            -DestinationPath "$env:GITHUB_WORKSPACE\dotnet-runtime-windows-xp-x86-$stamp.zip" `
+            -DestinationPath "$env:GITHUB_WORKSPACE\dotnet-runtime-windows-xp-x86-portable-$stamp.zip" `
             -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dotnet-runtime-windows-xp-x86
-          path: dotnet-runtime-windows-xp-x86-*.zip
+          name: dotnet-runtime-windows-xp-x86-portable
+          path: dotnet-runtime-windows-xp-x86-portable-*.zip
           retention-days: 30
 
       - name: Upload NuGet package
@@ -729,7 +948,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $assets = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\dotnet-runtime-windows-xp-x86-*.zip"
+          $assets = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\dotnet-runtime-windows-xp-x86-portable-*.zip"
 
           try {
             gh release view "$env:GITHUB_REF_NAME" --repo "$env:GITHUB_REPOSITORY" *> $null

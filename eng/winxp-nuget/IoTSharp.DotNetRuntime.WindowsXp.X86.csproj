@@ -5,7 +5,7 @@
     <PackageVersion Condition="'$(PackageVersion)' == ''">10.0.0-winxp.local</PackageVersion>
     <Authors>IoTSharp</Authors>
     <Company>IoTSharp</Company>
-    <Description>Replaces win-x86 self-contained publish output with IoTSharp .NET runtime native binaries built for Windows XP x86.</Description>
+    <Description>Replaces win-x86 self-contained publish output with an IoTSharp .NET runtime payload built for Windows XP x86.</Description>
     <PackageTags>dotnet;runtime;win-x86;x86;windows-xp;winxp;iotsharp</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/IoTSharp/dotnet_arm32</PackageProjectUrl>
@@ -41,6 +41,10 @@
            Text="WinXpPayloadDir must contain hostpolicy.dll." />
     <Error Condition="!Exists('$(WinXpPayloadDir)/hostfxr.dll')"
            Text="WinXpPayloadDir must contain hostfxr.dll." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/System.Private.CoreLib.dll')"
+           Text="WinXpPayloadDir must contain System.Private.CoreLib.dll from the same runtime build as coreclr.dll." />
+    <Error Condition="!Exists('$(WinXpPayloadDir)/System.Runtime.dll')"
+           Text="WinXpPayloadDir must contain the managed shared framework assemblies from the same runtime build." />
     <Error Condition="!Exists('$(WinXpPayloadDir)/apphost.exe')"
            Text="WinXpPayloadDir must contain apphost.exe." />
     <Error Condition="!Exists('$(WinXpPayloadDir)/singlefilehost.exe')"

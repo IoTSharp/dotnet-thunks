@@ -67,9 +67,11 @@
            Text="PublishDir is empty, so IoTSharp Windows XP runtime .dll files cannot be copied." />
     <Error Condition="!Exists('$(_IoTSharpWindowsXpPublishDir)coreclr.dll')"
            Text="The publish output does not contain coreclr.dll. Use a win-x86 self-contained publish output before applying IoTSharp Windows XP runtime replacement." />
+    <Error Condition="!Exists('$(_IoTSharpWindowsXpPublishDir)System.Private.CoreLib.dll')"
+           Text="The publish output does not contain System.Private.CoreLib.dll. Use a win-x86 self-contained publish output before applying IoTSharp Windows XP runtime replacement." />
 
     <Message Importance="high"
-             Text="Replacing win-x86 runtime .dll files with IoTSharp Windows XP build from '$(_IoTSharpWindowsXpRuntimePayloadDir)'." />
+             Text="Replacing win-x86 runtime .dll files with the IoTSharp Windows XP runtime payload from '$(_IoTSharpWindowsXpRuntimePayloadDir)'." />
 
     <Copy SourceFiles="@(_IoTSharpWindowsXpRuntimeDll)"
           DestinationFiles="@(_IoTSharpWindowsXpRuntimeDll->'$(_IoTSharpWindowsXpPublishDir)%(Filename)%(Extension)')"
